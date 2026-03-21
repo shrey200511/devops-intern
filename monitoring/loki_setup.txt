@@ -1,0 +1,124 @@
+=========================================
+  Monitoring with Grafana Loki
+  DevOps Intern Final Project
+=========================================
+
+## How Loki Was Started
+-----------------------------------------
+
+Loki was run locally using Docker with the official
+Grafana Loki image in a single-node configuration.
+
+Step 1: Pull the Loki Docker image
+-----------------------------------
+Command:
+  docker pull grafana/loki:2.9.0
+
+Step 2: Create a local config file
+------------------------------------
+A minimal loki-config.yaml was created with the
+following content:
+
+  auth_enabled: false
+
+  server:
+    http_listen_port: 3100
+
+  ingester:
+    lifecycler:
+      address: 127.0.0.1
+      ring:
+        kvstore:
+          store: inmemory
+        replication_factor: 1
+    chunk_idle_period: 5m
+    chunk_retain_period: 30s
+
+  schema_config:
+    configs:
+      - from: 2024-01-01
+        store: boltdb-shipper
+        object_store: filesystem
+        schema: v11
+        index:
+          prefix: index_
+          period: 24h
+
+  storage_config:
+    boltdb_shipper:
+      active_index_directory: /loki/index
+      cache_location: /loki/cache
+    filesystem:
+      directory: /loki/chunks
+
+  limits_config:
+    reject_old_samples: true
+    reject_old_samples_max_age: 168h
+
+Step 3: Start Loki container
+------------------------------
+Command used:
+  docker run -d \
+    --name loki \
+    -p 3100:3100 \
+    grafana/loki:2.9.0 \
+    -config.file=/etc/loki/local-config.yaml
+
+Verify Loki is running:
+  docker ps
+  curl http://localhost:3100/ready
+  (Expected response: "ready")
+
+Step 4: Forward container logs to Loki (Docker driver)
+-------------------------------------------------------
+Install the Loki Docker logging driver plugin:
+  docker plugin install grafana/loki-docker-driver:latest \
+    --alias loki \
+    --grant-all-permissions
+
+Run hello-devops container with logs forwarded to Loki:
+  docker run \
+    --log-driver=loki \
+    --log-opt loki-url="http://localhost:3100/loki/api/v1/push" \
+    --log-opt loki-external-labels="job=hello-devops" \
+    hello-devops
+
+## Commands Used to View Logs
+-----------------------------------------
+
+Option 1 — Query Loki API directly with curl:
+  curl -G "http://localhost:3100/loki/api/v1/query_range" \
+    --data-urlencode 'query={job="hello-devops"}' \
+    --data-urlencode "start=$(date -d '1 hour ago' +%s)000000000" \
+    --data-urlencode "end=$(date +%s)000000000"
+
+Option 2 — View via Grafana UI:
+  docker run -d \
+    --name grafana \
+    -p 3000:3000 \
+    grafana/grafana:latest
+
+  Then open: http://localhost:3000
+  Default login: admin / admin
+  Add Loki datasource: http://loki:3100
+  Go to Explore → select Loki → run query:
+    {job="hello-devops"}
+
+Option 3 — View raw container logs (quick check):
+  docker logs loki
+  docker logs <hello-devops-container-id>
+
+## Expected Log Output in Loki
+-----------------------------------------
+When querying {job="hello-devops"}, you should see:
+
+  timestamp: 2026-03-21T10:00:00Z
+  stream: {job="hello-devops", container="hello-devops"}
+  line: "Hello, DevOps!"
+
+## Summary of Ports
+-----------------------------------------
+  Loki:    http://localhost:3100
+  Grafana: http://localhost:3000
+
+=========================================
